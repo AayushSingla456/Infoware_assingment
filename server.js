@@ -1,35 +1,111 @@
-const request = require("request");
-const sharp = require("sharp");
-const Tesseract = require("tesseract.js");
+const express = require("express");
+const bodyParser = require("body-parser");
+const { Contact, Employee } = require("./models");
+const mongoose = require("mongoose");
 
-const captchaUrl = "https://i.ibb.co/jTKYQqP/Captcha-United.png";
+mongoose
+  .connect(
+    "mongodb+srv://Infoware:kq5Ra7jgIN78a9ZK@cluster0.jdhjp02.mongodb.net/Infoware?retryWrites=true&w=majority",
+    {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    }
+  )
+  .then(() => {
+    console.log("Connected to MongoDB Atlas");
+  })
+  .catch((err) => {
+    console.error("Error connecting to MongoDB Atlas:", err.message);
+  });
 
-// Download the captcha image
-request(captchaUrl, { encoding: null }, (err, res, body) => {
-  if (err) {
-    console.error("Error downloading captcha image:", err);
-    return;
+const app = express();
+app.use(bodyParser.json());
+
+// Create an employee with contacts
+app.post("/employees", async (req, res) => {
+  try {
+    const employee = new Employee(req.body.employee);
+    const contacts = req.body.contacts.map((contact) => new Contact(contact));
+    employee.contacts = await Promise.all(
+      contacts.map((contact) => contact.save())
+    );
+    await employee.save();
+    res.status(201).json(employee);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
   }
+});
 
-  // Preprocess the captcha image using the sharp library
-  sharp(body)
-    .resize(300) // Resize the image to a reasonable size
-    .grayscale() // Convert the image to grayscale
-    .normalize() // Enhance the contrast
-    .toBuffer((err, processedImage) => {
-      if (err) {
-        console.error("Error preprocessing captcha image:", err);
-        return;
-      }
+// List employees with pagination
+app.get("/employees", async (req, res) => {
+  try {
+    const page = req.query.page || 1;
+    const limit = req.query.limit || 10;
+    const employees = await Employee.find()
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate("contacts");
+    res.json(employees);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
 
-      // Use Tesseract to recognize the characters in the captcha image
-      Tesseract.recognize(processedImage)
-        .then(({ data: { text } }) => {
-          // Return the recognized captcha characters
-          console.log("Captcha:", text.trim());
-        })
-        .catch((err) => {
-          console.error("Error recognizing captcha:", err);
-        });
-    });
+// Update an employee
+app.put("/employees/:id", async (req, res) => {
+  try {
+    const employee = await Employee.findByIdAndUpdate(
+      req.params.id,
+      req.body.employee,
+      { new: true }
+    );
+    const contacts = req.body.contacts.map((contact) => new Contact(contact));
+    employee.contacts = await Promise.all(
+      contacts.map((contact) => contact.save())
+    );
+    await employee.save();
+    res.json(employee);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// Delete an employee
+app.delete("/employees/:id", async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+    await Contact.deleteMany({ _id: { $in: employee.contacts } });
+    await Employee.deleteOne({ _id: req.params.id });
+    res.json({ message: "Employee deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// Get an employee
+app.get("/employees/:id", async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id).populate(
+      "contacts"
+    );
+    if (!employee) {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+    res.json(employee);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// Start the server
+app.listen(3000, () => {
+  console.log("Server listening on port 3000");
 });
